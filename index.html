@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Todo List App</title>
+<style>
+body {
+font-family: Arial, sans-serif;
+margin: 0;
+padding: 0;
+display: flex;
+min-height: 100vh;
+}
+
+
+.container {
+display: flex;
+flex: 1;
+}
+
+
+.left-panel {
+flex: 1;
+padding: 40px;
+background-color: #f9f9f9;
+box-sizing: border-box;
+}
+
+
+.right-panel {
+flex: 1;
+background: url('https://images.unsplash.com/photo-1524995997946-a1c2e315a42f') center/cover no-repeat;
+}
+
+
+h2 {
+text-align: center;
+margin-bottom: 20px;
+}
+
+
+input, button {
+width: 100%;
+padding: 12px;
+margin: 8px 0;
+border: 1px solid #ccc;
+border-radius: 6px;
+font-size: 16px;
+}
+
+
+button {
+background-color: #007BFF;
+color: white;
+border: none;
+transition: background-color 0.3s ease;
+}
+
+
+button:hover {
+background-color: #0056b3;
+}
+
+
+.todo-item {
+padding: 12px;
+border: 1px solid #ddd;
+border-radius: 6px;
+margin: 8px 0;
+background: #fff;
+}
+
+
+.flex {
+display: flex;
+justify-content: space-between;
+align-items: center;
+margin-bottom: 20px;
+}
+
+
+.form-group {
+margin-bottom: 20px;
+}
+</style>
+<script type="module">
+  import {
+    CognitoIdentityProviderClient,
+    SignUpCommand,
+    InitiateAuthCommand
+  } from "https://cdn.skypack.dev/@aws-sdk/client-cognito-identity-provider";
+  import {
+    DynamoDBClient,
+    PutItemCommand,
+    QueryCommand
+  } from "https://cdn.skypack.dev/@aws-sdk/client-dynamodb";
+  import { fromCognitoIdentityPool } from "https://cdn.skypack.dev/@aws-sdk/credential-provider-cognito-identity";
+  import { CognitoIdentityClient } from "https://cdn.skypack.dev/@aws-sdk/client-cognito-identity";
+ 
+  const REGION = "us-east-1"; // Update if your resources are in a different region
+  const USER_POOL_ID = "us-east-1_Q4FsslbYx"; // Replace with your User Pool ID
+  const CLIENT_ID = "5all8vptle2q8lj53q3khms1ht"; // Replace with your App Client ID
+  const IDENTITY_POOL_ID = "us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+ 
+  const cognitoClient = new CognitoIdentityProviderClient({ region: REGION });
+ 
+  let credentials;
+  let currentUserId;
+ 
+  const getUserCredentials = (token) => {
+    return fromCognitoIdentityPool({
+      client: new CognitoIdentityClient({ region: REGION }),
+      identityPoolId: IDENTITY_POOL_ID,
+      logins: {
+        [`cognito-idp.${REGION}.amazonaws.com/${USER_POOL_ID}`]: token,
+      },
+    });
+  };
+ 
+  const signup = async () => {
+    try {
+      const email = emailInput.value;
+      const password = passwordInput.value;
+ 
+      await cognitoClient.send(new SignUpCommand({
+        ClientId: CLIENT_ID,
+        Username: email,
+        Password: password,
+      }));
+ 
+      alert("Sign up successful. Check your email to confirm account.");
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  };
+ 
+  const login = async () => {
+    try {
+      const email = emailInput.value;
+      const password = passwordInput.value;
+ 
+      const response = await cognitoClient.send(new InitiateAuthCommand({
+        AuthFlow: "USER_PASSWORD_AUTH",
+        ClientId: CLIENT_ID,
+        AuthParameters: {
+          USERNAME: email,
+          PASSWORD: password,
+        },
+      }));
+ 
+      const idToken = response.AuthenticationResult.IdToken;
+      credentials = await getUserCredentials(idToken)();
+      currentUserId = email;
+ 
+      authSection.style.display = "none";
+      appSection.style.display = "block";
+      loadTodos();
+    } catch (err) {
+      alert("Login failed: " + err.message);
+    }
+  };
+ 
+  const dbClient = new DynamoDBClient({ region: REGION });
+ 
+  const addTodo = async () => {
+    const subject = subjectInput.value.trim();
+    const task = taskInput.value.trim();
+    if (!subject || !task) return alert("Fill subject and task!");
+ 
+    await dbClient.send(new PutItemCommand({
+      TableName: "Todos",
+      Item: {
+        uid: { S: currentUserId },
+        subject: { S: subject },
+        task: { S: task },
+      },
+      credentials,
+    }));
+ 
+    subjectInput.value = "";
+    taskInput.value = "";
+    loadTodos();
+  };
+ 
+  const loadTodos = async () => {
+    const result = await dbClient.send(new QueryCommand({
+      TableName: "Todos",
+      KeyConditionExpression: "uid = :u",
+      ExpressionAttributeValues: {
+        ":u": { S: currentUserId },
+      },
+      credentials,
+    }));
+ 
+    todoList.innerHTML = "";
+    result.Items.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "todo-item";
+      div.innerHTML = `<strong>${item.subject.S}</strong>: ${item.task.S}`;
+      todoList.appendChild(div);
+    });
+  };
+ 
+  document.getElementById("signup").onclick = signup;
+  document.getElementById("login").onclick = login;
+  document.getElementById("logout").onclick = () => location.reload();
+  document.getElementById("add-todo").onclick = addTodo;
+  </script>
+</head>
+<body>
+<div class="container">
+<div class="left-panel">
+<h2>Todo List App</h2>
+
+
+<div id="auth-section">
+<div class="form-group">
+<input type="email" id="email" placeholder="Email">
+</div>
+<div class="form-group">
+<input type="password" id="password" placeholder="Password">
+</div>
+<button id="signup">Sign Up</button>
+<button id="login">Log In</button>
+</div>
+
+
+<div id="app-section" style="display:none;">
+<div class="flex">
+<button id="logout">Log Out</button>
+</div>
+<center><h3>Your Todo's</h3></center>
+<input type="text" id="subject" placeholder="Subject">
+<input type="text" id="task" placeholder="Task">
+<button id="add-todo">Add Todo</button>
+<div id="todo-list"></div>
+</div>
+</div>
+
+
+<div class="right-panel"></div>
+</div>
+</body>
+</html>
